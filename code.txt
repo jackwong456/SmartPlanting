@@ -1,0 +1,506 @@
+#include <SoftwareSerial.h>
+#include <Servo.h>
+
+Servo waters;
+Servo window;
+Servo humidifier;
+Servo lime;
+
+struct record{
+  	int id;
+	int temp;
+	int light;
+	int gas;
+	int ph;
+	int airH;
+	int soilH;
+};
+
+struct range {
+	record upper;
+	record lower;
+};
+
+//Used for the 6 values obtained from the sensors
+int temp = 0;
+int light = 0;
+int gas = 0;
+int ph = 0;
+int airH = 0;
+int soilH = 0;
+
+//Unique identifier of different set of data obtained from the sensors
+int uid = 1;
+
+struct record database[5];
+struct range autoSetting;
+struct range sunflower = {{-1,50,1000,800,8,70,100}, {-1,20,500,400,5,50,70}};
+struct range lily = {{-2,15,500,800,7,80,70}, {-2,10,0,400,6,70,50}};
+struct range cactus = {{-3,80,1000,800,8,60,40}, {-3,20,800,400,6,0,10}};
+struct range aloe = {{-4,35,700,800,8,60,40}, {-4,0,0,400,6,0,10}};
+
+bool start = true;
+bool inManual = false;
+bool autoStart;
+bool goMenu = false;
+
+void setup()
+{
+	Serial.begin(9600);
+  	
+	waters.attach(13);
+  	window.attach(12);
+  	humidifier.attach(8);
+  	lime.attach(7);
+  
+  	waters.write(0);
+  	window.write(0);
+  	humidifier.write(0);
+  	lime.write(0);
+  
+ 	digitalWrite(11, LOW); //turn off co2 emitter
+  	digitalWrite(11, LOW); //turn off brightness system
+
+	pinMode(6,OUTPUT); //led
+ 	pinMode(5,OUTPUT);
+ 	pinMode(4,OUTPUT);
+ 	pinMode(3,OUTPUT);
+}
+
+void loop() {  
+  	while (start == true) {
+      	String input = Serial.readString();
+      	if (input == "start") {
+      		start = false;
+          	Serial.println(input);
+        } else if (input != ""){
+        	Serial.println("Invalid Input");
+        }
+  	}
+  
+  	Serial.println("Menu");
+  	String menuCommand = Serial.readString();
+  	while (menuCommand == "") {
+  		menuCommand = Serial.readString();
+      	delay(1000);
+  	}
+  	Serial.println(menuCommand);
+  
+  	if (menuCommand == "auto") {
+      	Auto_Mode();
+    } else if (menuCommand == "manual") {
+      	inManual = true;
+     	Manual_Mode();
+    } else if (menuCommand == "show data") {
+      	getData();
+      	print_Data();
+    } else if (menuCommand == "report") {
+      	Serial.println(database[0].id);
+      	Serial.println(database[0].temp);
+      	Serial.println(database[0].light);
+      	Serial.println(database[0].gas);
+      	Serial.println(database[0].ph);
+      	Serial.println(database[0].airH);
+      	Serial.println(database[0].soilH);
+      	
+      	Serial.println(database[1].id);
+      	Serial.println(database[1].temp);
+      	Serial.println(database[1].light);
+      	Serial.println(database[1].gas);
+      	Serial.println(database[1].ph);
+      	Serial.println(database[1].airH);
+      	Serial.println(database[1].soilH);
+    } else {
+        Serial.println("Invalid Input");
+    }
+}
+
+void Auto_Mode()
+{
+  Serial.println("Auto_Mode");
+  Serial.println("sunflower,lily,cactus,aloe or other");
+  
+  while (!goMenu) {
+    autoStart = true;
+    String flower = Serial.readString();
+    while (flower == ""){
+      flower = Serial.readString();
+      delay(1000);
+    }
+    Serial.println(flower);
+
+    if (flower == "sunflower") {
+      autoSetting = sunflower;      
+      Serial.println("input_data_for_planting_sunflower");
+    } else if (flower == "lily") {    
+      autoSetting = lily;
+      Serial.println("input_data_for_planting_lily");
+    } else if (flower == "cactus") {
+      autoSetting = cactus;
+      Serial.println("input_data_for_planting_cactus");
+    } else if (flower == "aloe") { 
+      autoSetting = aloe;
+      Serial.println("input_data_for_planting_aloe");
+    } else if (flower == "other") {
+      setThreshold();
+    } else if (flower == "menu") {
+      autoStart = false;
+      goMenu = true;
+    } else {
+      Serial.println("Invalid Input!Please input again.");
+      autoStart = false;
+    }
+
+    while(autoStart){
+      getData();
+      print_Data();
+      
+      database[(uid % 5) - 1].id = uid;
+      database[(uid % 5) - 1].temp = temp;
+      database[(uid % 5) - 1].light = light;
+      database[(uid % 5) - 1].gas = gas;
+      database[(uid % 5) - 1].ph = ph;
+      database[(uid % 5) - 1].airH = airH;
+      database[(uid % 5) - 1].soilH = soilH;
+      
+      uid++;
+
+      adjustLight(light, autoSetting); 
+      adjustTemp(temp, autoSetting);
+      adjustGas(gas, autoSetting);
+      adjustPh(ph, autoSetting);
+      adjustAirH(airH, autoSetting);
+      adjustSoilH(soilH, autoSetting); 
+   
+      String command = Serial.readString();
+      if (command == "menu") {
+        autoStart = false;
+        goMenu = true;
+      } else if (command != ""){
+        Serial.println("Invalid Input!Please input again.");
+      }  	
+      delay(3000);
+    }
+  }
+}
+
+void Manual_Mode() {
+  	Serial.println("Manual_Mode");
+  
+  	while (true){
+      	String command;
+        while(command == ""){
+            command = Serial.readString();
+          	delay(1000);
+        }
+        Serial.println(command);
+
+        if (command.indexOf("light") != -1) {		//check user input have "light" or not
+            //check the num after the command light, e.g. "light 1"
+          	//1 means close all, 2 mean half is on,3 mean all on
+            if (command.substring(command.indexOf(" ") + 1).toInt() == 1) {
+                digitalWrite(6, LOW);
+                digitalWrite(5, LOW);
+                digitalWrite(4, LOW);
+                digitalWrite(3, LOW);
+            } else if (command.substring(command.indexOf(" ") + 1).toInt() == 2) {
+                digitalWrite(6, HIGH);
+                digitalWrite(5, HIGH);
+                digitalWrite(4, LOW);
+                digitalWrite(3, LOW);
+            } else if (command.substring(command.indexOf(" ") + 1).toInt() == 3) {
+                digitalWrite(6, HIGH);
+                digitalWrite(5, HIGH);
+                digitalWrite(4, HIGH);
+                digitalWrite(3, HIGH);
+            }
+        } else if (command.indexOf("fan") != -1) {		//check user input have "fan" or not
+          	if (command.substring(command.indexOf(" ") + 1) == "on") {	
+          		analogWrite(10, 255);
+          	} else if (command.substring(command.indexOf(" ") + 1) == "off") {	
+          		digitalWrite(10, LOW);
+          	}
+        } else if (command.indexOf("window") != -1) {		//check user input have "window" or not
+            if (command.substring(command.indexOf(" ") + 1) == "on") {	
+          		window.write(90);
+          	} else if (command.substring(command.indexOf(" ") + 1) == "off") {	
+          		window.write(0);
+          	}
+        } else if (command.indexOf("co2") != -1) {		//check user input have "co2" or not
+            if (command.substring(command.indexOf(" ") + 1) == "on") {	
+          		digitalWrite(11, HIGH);
+          	} else if (command.substring(command.indexOf(" ") + 1) == "off") {	
+          		digitalWrite(11, LOW);
+          	}
+        } else if (command.indexOf("ph") != -1) {		//check user input have "ph" or not
+            if (command.substring(command.indexOf(" ") + 1) == "high") {	
+          		lime.write(90);		//add lime if user want a high ph
+          	} else if (command.substring(command.indexOf(" ") + 1) == "low") {	
+          		lime.write(180);	//add fertilizer if user want a low ph
+          	} else if (command.substring(command.indexOf(" ") + 1) == "normal") {	
+          		lime.write(0);		//do not add anything
+          	}
+        } else if (command.indexOf("airH") != -1) {		//check user input have "airH" or not
+            if (command.substring(command.indexOf(" ") + 1) == "high") {	
+          		humidifier.write(90);	//turn on humidifier
+          	} else if (command.substring(command.indexOf(" ") + 1) == "low") {	
+          		humidifier.write(180);	//turn on dehumidifier
+          	} else if (command.substring(command.indexOf(" ") + 1) == "normal") {	
+          		humidifier.write(0);	//both humidifier/dehumidifier are off
+          	}
+        } else if (command.indexOf("soilH") != -1) {		//check user input have "soilH" or not
+            if (command.substring(command.indexOf(" ") + 1) == "on") {	
+          		waters.write(90);
+          	} else if (command.substring(command.indexOf(" ") + 1) == "off") {	
+          		waters.write(0);
+            }
+        } else if (command == "show data") {
+            Serial.println(command);
+          	getData();
+            print_Data();
+       	} else if (command == "timer") {
+            timerset();
+     	} else if (command == "menu") {
+            inManual = false;
+           	return;
+        } else {
+        	Serial.println("Invalid Input!Please input again.");
+        }
+    }
+}
+
+void getData() {
+	gas = analogRead(A0);
+  	light = analogRead(A2);
+  	temp = (1000*((analogRead(A1) * 5.0)/1024)-500)/10;
+  	ph = (1000*((analogRead(A3) * 5.0)/1024)-500)/10;
+  	airH = (1000*((analogRead(A4) * 5.0)/1024)-500)/10;
+	soilH = (1000*((analogRead(A5) * 5.0)/1024)-500)/10;
+}
+
+void print_Data() {
+  	Serial.print("Gas: ");
+	Serial.print(gas);
+	Serial.println(" PPM");
+
+  	Serial.print("Temp: ");
+  	Serial.print(temp);
+	Serial.println(" Celsius");
+
+  	Serial.print("Light: ");
+  	Serial.print(light);
+	Serial.println(" LM");
+  	
+  	Serial.print("PH: ");
+  	Serial.print(ph);
+	Serial.println(" ");
+  
+  	Serial.print("Air-Humidity: ");
+  	Serial.print(airH);
+	Serial.println(" %");
+  	
+  	Serial.print("Soil-Humidity: ");
+  	Serial.print(soilH);
+	Serial.println(" %");
+
+	Serial.println("------------------------");
+}
+
+void adjustLight(int light,struct range type)
+{
+    if (light > type.upper.light)
+    {
+        digitalWrite(6, LOW);
+        digitalWrite(5, LOW);
+        digitalWrite(4, LOW);
+        digitalWrite(3, LOW);
+    }
+
+    else if (light < type.lower.light)
+    {
+        digitalWrite(6, HIGH);
+        digitalWrite(5, HIGH);
+        digitalWrite(4, HIGH);
+        digitalWrite(3, HIGH);
+    }
+    else
+    {
+        digitalWrite(6, HIGH);
+        digitalWrite(5, HIGH);
+        digitalWrite(4, LOW);
+        digitalWrite(3, LOW);
+    }
+}
+
+void adjustTemp(int temp, struct range type)
+{
+    if (temp > type.upper.temp)
+        analogWrite(10, 255);// fan
+    /*else if (temp < type.lower.temp) {
+        turn on heater?
+    }*/
+    else
+        digitalWrite(10, LOW);// fan
+}
+
+void adjustGas(int gas, struct range type)
+{
+    if (gas < type.lower.gas)
+    {
+        window.write(0);
+        digitalWrite(11, HIGH);
+    }
+    else if(gas>type.upper.gas)
+    {
+        window.write(180);
+        digitalWrite(11, LOW);
+    }
+    else
+    {
+        window.write(90);
+        digitalWrite(11, LOW);
+    }
+}
+
+void adjustPh(int ph, struct range type)
+{
+    if (ph < type.lower.ph && ph >= 0)
+        lime.write(180);
+    else if (ph > type.upper.ph && ph <= 14)
+        lime.write(90);
+    else
+        lime.write(0);
+}
+
+void adjustAirH(int airH, struct range type)
+{
+    if (airH < type.lower.airH && airH >= 0)
+        humidifier.write(90);
+    else if (airH > type.upper.airH && airH <= 100)
+        humidifier.write(180);
+    else
+        humidifier.write(0);
+}
+
+void adjustSoilH(int soilH, struct range type)
+{
+    if (soilH < type.lower.soilH && soilH >= 0)
+        waters.write(90);
+    /*else if (soilH > type.upper.soilH) {
+        warn user ?
+    }*/
+    else
+        waters.write(0);
+}
+
+
+/* 
+input the valid range for each condition based on sequence
+of light->temp->gas->ph->air->soil.
+e.g "100-900 0-60 500-700 4-10 30-80 30-80"
+*/
+void setThreshold()
+{ 
+  	Serial.println("input the valid range for each condition based on sequence");
+  	Serial.println("of light->temp->gas->ph->air->soil.");
+   	Serial.println("e.g. 100-900 0-60 500-700 4-10 30-80 30-80");
+  	String c;
+    while (c == "") {
+        c = Serial.readString();
+    }
+    int s = 0, t = 1;
+    int n = c.length();
+    for (int i = 0; i < n; i++) {
+        if (c[i] == '-') {
+            switch (t) {
+            case 1: autoSetting.lower.light = c.substring(s, i).toInt();
+            case 2: autoSetting.lower.temp = c.substring(s, i).toInt();
+            case 3: autoSetting.lower.gas = c.substring(s, i).toInt();
+            case 4: autoSetting.lower.ph = c.substring(s, i).toInt();
+            case 5: autoSetting.lower.airH = c.substring(s, i).toInt();
+            case 6: autoSetting.lower.soilH = c.substring(s, i).toInt();
+            }
+            s = i + 1;
+        }
+        else if (isSpace(c[i]) || i + 1 == n) {
+            switch (t) {
+            case 1: autoSetting.upper.light = c.substring(s, i).toInt();
+            case 2: autoSetting.upper.temp = c.substring(s, i).toInt();
+            case 3: autoSetting.upper.gas = c.substring(s, i).toInt();
+            case 4: autoSetting.upper.ph = c.substring(s, i).toInt();
+            case 5: autoSetting.upper.airH = c.substring(s, i).toInt();
+            case 6: autoSetting.upper.soilH = c.substring(s, n).toInt();
+            }
+            s = i + 1;
+            t++;
+        }
+    }
+   	/*
+    Serial.println(autoSetting.lower.light);
+    Serial.println(autoSetting.lower.temp);
+    Serial.println(autoSetting.lower.gas);
+    Serial.println(autoSetting.lower.ph);
+    Serial.println(autoSetting.lower.airH);
+    Serial.println(autoSetting.lower.soilH);
+    Serial.println("---------------------");
+    Serial.println(autoSetting.upper.light);
+    Serial.println(autoSetting.upper.temp);
+    Serial.println(autoSetting.upper.gas);
+    Serial.println(autoSetting.upper.ph);
+    Serial.println(autoSetting.upper.airH);
+    Serial.println(autoSetting.upper.soilH);
+    */
+}
+  
+void timerset()
+{
+  Serial.println("Select the number of function at you want to set the timer");
+  Serial.println("1.)Light 2.)window 3.)watering system");
+  String timercommand = Serial.readString();
+  while (timercommand == "") {
+  		timercommand = Serial.readString();
+      	delay(1000);
+  	}
+  if (timercommand == "1") {
+    	Serial.println("Light timer selected");
+      	lighttimer();
+    } //else if (timercommand == "2") {
+		//Serial.println("Window timer selected");
+      	//windowtimer();
+    //} else if (timercommand == "3") {
+		//Serial.println("Watering timer selected");
+      	//watertimer();
+  	//} 
+		else {
+    	Serial.println("Invalid Input, back to manual menu.");
+  	}
+  return;
+}
+
+void lighttimer()
+{
+  int delaytime = 5;
+  int timer = 5;
+  //Serial.println("Please input the delay time for timer start");
+  
+  //Serial.println("Please input the countdown for timer");
+  
+  Serial.println("Light Timer Set!");
+  digitalWrite(6, LOW);
+  digitalWrite(5, LOW);
+  digitalWrite(4, LOW);
+  digitalWrite(3, LOW);
+  delay(delaytime*1000);
+  Serial.println("Light Timer Start");
+  digitalWrite(6, HIGH);
+  digitalWrite(5, HIGH);
+  digitalWrite(4, HIGH);
+  digitalWrite(3, HIGH);
+  delay(timer*1000);
+  Serial.println("Time's up for light timer");
+  digitalWrite(6, LOW);
+  digitalWrite(5, LOW);
+  digitalWrite(4, LOW);
+  digitalWrite(3, LOW);
+  return;
+}
